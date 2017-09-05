@@ -18,6 +18,8 @@ namespace Payment_job_scheduling_FM
 {
     class Program
     {
+        private static Mutex mutex;
+
         static StringBuilder sb = new StringBuilder();
 
         static string createText = null;
@@ -47,16 +49,26 @@ namespace Payment_job_scheduling_FM
             int max_id_mysql = Int32.Parse(a);
             int max_trx_id_oracle = Int32.Parse(get_max_idseq_trx_table_in_oracle());
 
-
-            Console.WriteLine("fm_trx_payment start_from = " + max_id_mysql + " <==> until fm_trx_payment =  " + max_trx_id_oracle);
-            if(max_id_mysql < max_trx_id_oracle)
+            mutex = new Mutex(true, "Payment_job_scheduling_FM");
+            if (!mutex.WaitOne(0, false))
             {
-                read_data_trx_table(max_id_mysql, max_trx_id_oracle);
+                return;
             }
-            
-            Console.WriteLine("Good Bye . . . . .");
+            else
+            {
+                Console.WriteLine("fm_trx_payment start_from = " + max_id_mysql + " <==> until fm_trx_payment =  " + max_trx_id_oracle);
+                if (max_id_mysql < max_trx_id_oracle)
+                {
+                    read_data_trx_table(max_id_mysql, max_trx_id_oracle);
+                }
 
-            Thread.Sleep(2000);
+                Console.WriteLine("Good Bye . . . . .");
+
+                Thread.Sleep(2000);
+            }
+
+
+            
         }
 
         static string get_max_trx_id()
@@ -274,7 +286,21 @@ namespace Payment_job_scheduling_FM
                             data[a] = dr.GetValue(a).ToString();
                         }
 
-                        if (data[1].Substring(0, 1) == "5") //HANDLE IF CUST_NUMBER IS PROSPECT_NUMBER
+                        if (data[1].Substring(0, 1) == "5" && data[1].Length == 9) //HANDLE IF CUST_NUMBER IS PROSPECT_NUMBER and have icc cust nbr
+                        {
+                            insert_to_prospect_icc_table_mysql(data);
+
+                            sb.Append("insert to PROSPECT_ICC mysql table#" + data[1] + '#' + data[2] + '#' + data[0] + "#" + DateTime.Now.ToString("dd_M_yyyy_HH:mm:ss") + Environment.NewLine);
+                            checking_file_log();
+                            write_info_to_log_file();
+
+                            string total_data_prospect_no = count_in_prospect_icc_table_mysql(data[1]);
+                            int x = Int32.Parse(total_data_prospect_no);
+
+                            if (x == 1)
+                                break;
+                        }
+                        if (data[1].Length == 10) //HANDLE IF CUST_NUMBER IS PROSPECT_NUMBER and have no icc cust nbr
                         {
                             insert_to_prospect_icc_table_mysql(data);
 
@@ -491,8 +517,17 @@ namespace Payment_job_scheduling_FM
 
                 command.CommandText = @"INSERT INTO " + mysql_prospect_icc_table + " (PROSPECT_CUST_NO, ICC_CUST_NO, AMOUNT, TGLPAY, ID_PAY, MERCHANT) VALUES (?PROSPECT_CUST_NO, ?ICC_CUST_NO, ?AMOUNT, ?TGLPAY, ?ID_PAY, ?MERCHANT)";
 
-                command.Parameters.AddWithValue("?PROSPECT_CUST_NO", data[1]);
-                command.Parameters.AddWithValue("?ICC_CUST_NO", "0");
+                if (data[1].Length == 9) // handle if only have icc cust_nbr and have no 10digit prospect nbr
+                {
+                    command.Parameters.AddWithValue("?PROSPECT_CUST_NO", "0");
+                    command.Parameters.AddWithValue("?ICC_CUST_NO", data[1]);
+                }
+                if (data[1].Length == 10) // handle if only have icc cust_nbr and have no 10digit prospect nbr
+                {
+                    command.Parameters.AddWithValue("?PROSPECT_CUST_NO", data[1]);
+                    command.Parameters.AddWithValue("?ICC_CUST_NO", "0");
+                }
+                
                 command.Parameters.AddWithValue("?AMOUNT", data[2]);
                 command.Parameters.AddWithValue("?TGLPAY", data[0]);
                 command.Parameters.AddWithValue("?ID_PAY", data[14]);
